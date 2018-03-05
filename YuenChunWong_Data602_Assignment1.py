@@ -45,7 +45,7 @@ def menuTrade():
         
         print('\n\n**Trade Action**')
         print('1. Buy')
-        print('2. Sell')
+        print('2. Sell (FIFO)')
         print('3. Sell to Open (Short)')
         print('4. Buy to Close (Short)')
         print('9. Quit')

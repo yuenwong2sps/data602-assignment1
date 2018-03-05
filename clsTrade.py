@@ -119,19 +119,26 @@ class Trade:
         
         if Action == "BUY":
             order.Units = Units
-        
+            if quote.Ask == 0:
+                order.ExecPx = quote.Close
+            else:
+                order.ExecPx = quote.Ask
         
         if Action == "SELL":
             order.Units = -1*Units
             order.PurchasedDate = PurchasedDate
+            if quote.Bid == 0:
+                order.ExecPx = quote.Close
+            else:
+                order.ExecPx = quote.Bid
         
-        order.ExecPx = quote.Ask
         
-        order.Amount = quote.Ask * Units
+        
+        order.Amount = order.ExecPx * Units
         
         order.ExecDate = str(datetime.datetime.now())
         
-        order.CostBasis = CostBasis #buy cost basis = 0, sell has cost basis
+        order.CostBasis = abs(float(CostBasis)) #buy cost basis = 0, sell has cost basis
         
         order.Status = "Y"
         

@@ -119,14 +119,15 @@ class Portfolio:
         
         #Long action
         if order.Action == "SELL":
+            #for sell, order.Unit is neative, use abs() to fix the unit
             for p in self.Positions:
                 if p.PurchasedDate == order.PurchasedDate and p.Symbol == order.Symbol:
-                    if p.Units == order.Units: #sell the whole lot
+                    if p.Units == abs(order.Units): #sell the whole lot
                         p.Units = 0
                         p.CostBasis = 0
                     else:
-                        adj_costBasis = 1 - (order.Units/p.Units)*p.CostBasis #update cost basis due to partail sell
-                        p.Units = p.Units - order.Units
+                        adj_costBasis = 1 - (float(abs(order.Units))/float(p.Units))*float(p.CostBasis) #update cost basis due to partail sell
+                        p.Units = p.Units - abs(order.Units)
                         p.CostBasis = adj_costBasis
                     #after sell, add cash
                     self.Cash = self.Cash + order.Amount

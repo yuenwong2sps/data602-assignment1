@@ -10,12 +10,13 @@ import clsPortfolio
 
 import csv
 
-
+import collections
 
 
         
         
 StockList = ['AAPL','AMZN','INTC', 'MSFT', 'SNAP']
+priceWarning = False
 
 class TradeModelView:
     def __init__(self):
@@ -47,12 +48,23 @@ class TradeModelView:
         #display sorted holdings
         print("Symbol | Units | Price | Market Value")
         for h_key in sorted(dict_symbolaggHld.keys()):
-            current_price = (self.dict_stockAskPx[h_key] + self.dict_stockBidPx[h_key])/2 #usually curretn price = (bid + ask)/2
-            market_value = dict_symbolaggHld[h_key]*current_price # market value for position = units * current price           
+            current_price = 0
+            
+            if (self.dict_stockAskPx[h_key] == 0 or  self.dict_stockBidPx[h_key] == 0):
+                current_price = self.dict_stockClosePx[h_key]
+            else:
+                current_price = (self.dict_stockAskPx[h_key] + self.dict_stockBidPx[h_key])/2 #usually curretn price = (bid + ask)/2
+           
+            market_value = float(dict_symbolaggHld[h_key])*float(current_price) # market value for position = units * current price           
             print(h_key + "   " + str(dict_symbolaggHld[h_key]) + "   " + str(current_price) + "   " + str(market_value) )
+    
+        
+    
     
     def RefreshPrice(self):
         print("Refreshing price...")
+        
+        priceWarning = False
         
         for sym in StockList:
             stock_quote = clsTrade.Quote #create new instance
@@ -63,8 +75,14 @@ class TradeModelView:
             self.dict_stockAskPx[sym] = stock_quote.Ask
             self.dict_stockOpenPx[sym] = stock_quote.Open
             self.dict_stockClosePx[sym] = stock_quote.Close 
-            self.dict_stockStatusPx[sym] = stock_quote.Status                   
+            self.dict_stockStatusPx[sym] = stock_quote.Status
+            
+            if(stock_quote.Bid == 0 or stock_quote.Ask == 0):
+                priceWarning = True                       
     
+        if priceWarning == True:
+            print("Warning: Some prices have zero $ for bid or ask price, switch to Close price.\n\n")
+            
     def TradeBuy(self):
         
        
@@ -75,7 +93,7 @@ class TradeModelView:
         print("\n"*100)
         self.DisplayCurrentHoldings()
         
-        print("Stock | Bid | Ask | Open | Close | Quote Status")
+        print("\nQuote\nStock | Bid | Ask | Open | Close | Quote Status")
         for sym in StockList:
             print(sym + "  " + str(self.dict_stockBidPx[sym]) + " " +  str(self.dict_stockAskPx[sym]) + " " +  str(self.dict_stockOpenPx[sym]) + " " +  str(self.dict_stockClosePx[sym]) + " " +  str(self.dict_stockStatusPx[sym]))
 
@@ -101,7 +119,12 @@ class TradeModelView:
                 if int_units > 0: #buy units > 0
                 
                     #Cash control that prevent account in debt, use ask for buy
-                    if int_units * self.dict_stockAskPx[input_sym] < self.objPortfolio.GetCash():
+                    current_price = 0
+                    if priceWarning == True:
+                        current_price = self.dict_stockClosePx[input_sym]
+                    else:
+                        current_price = self.dict_stockAskPx[input_sym]
+                    if int_units * current_price < self.objPortfolio.GetCash():
                         order = self.objTrade.OrderEntry("BUY",input_sym,int_units,0,"")
                         self.objPortfolio.UpdatePosition(order)
                     else:
@@ -121,7 +144,7 @@ class TradeModelView:
         print("\n"*100)
         self.DisplayCurrentHoldings()
         
-        print("Stock | Bid | Ask | Open | Close | Quote Status")
+        print("\nQuote\nStock | Bid | Ask | Open | Close | Quote Status")
         for sym in StockList:
             print(sym + "  " + str(self.dict_stockBidPx[sym]) + " " +  str(self.dict_stockAskPx[sym]) + " " +  str(self.dict_stockOpenPx[sym]) + " " +  str(self.dict_stockClosePx[sym]) + " " +  str(self.dict_stockStatusPx[sym]))
 
@@ -168,29 +191,38 @@ class TradeModelView:
                                     
                             else: #current pos is enough to cover
                             #sell partial lot, update cost basis for remained position
-                                agg_sell_costBasis =  (float(agg_sell_amount)/float(pos.Units) * float(pos.CostBasis)
+                                agg_sell_costBasis =  (float(agg_sell_amount)/float(pos.Units) * float(pos.CostBasis))
                                 order = self.objTrade.OrderEntry("SELL",input_sym,agg_sell_amount,agg_sell_costBasis,pos.PurchasedDate)
                                 self.objPortfolio.UpdatePosition(order)
                                     
                     else: #shorting
-                        print("Not Enough Cash to cover your order.  Order is cancelled.")
+                        print("Not Enough units to cover your sell order.  Order is cancelled.")
         else:    
             print("Cancel!")
         
         input_pause = raw_input("Enter to Continue...").strip()
 
+OrderedEntry = collections.namedtuple('Entry',['Side','Ticker','Quantity','ExecPx','MoneyInOut','ExecDate'])
+
 class BlotterModelView:
     def ReadOrderHistory(self):
+        entries = []
         
         f = open("OrderHistory.csv",'rb')
         csvReader = csv.reader(f)
-        print("Action | Symbol | Units | Amount | ExecPx | ExecDate | CostBasis | LotPurchasedDate(sell)")
+        print("Side | Ticker | Quantity | ExecPx | Money In/Out | ExecDate" )
         for row in csvReader:
             if len(row) > 3:
                 if(row[0]!='Action'): #skip the header line
-                    #create object to store position
-                    
-                    print(row[0] + "," + row[1] + "," + row[2] + "," + row[3] + "," + row[4] + "," + row[5]  + "," + row[6] + "," + row[7] )
-                
+                    #File format:
+                    #Action,Symbol,Units,Amount,ExecPx,ExecDate,CostBasis,LotPurChasedDate
+                    i_entry = OrderedEntry(row[0],row[1],row[2],row[4],row[3],row[5])
+                    entries.append(i_entry)
+                   
         f.close()
     
+        entries = sorted(entries, key = lambda entry: (entry.ExecDate), reverse=True)
+                   
+        for i_entry in entries:
+            print(i_entry.Side + "," + i_entry.Ticker + "," + i_entry.Quantity + "," + i_entry.ExecPx + "," + i_entry.MoneyInOut + "," + i_entry.ExecDate)
+            
