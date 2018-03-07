@@ -30,7 +30,12 @@ class TradeModelView:
         
     #return records for holdings    
     def DisplayCurrentHoldings(self):
-        print("Current Cash: " + str(self.objPortfolio.GetCash()))
+        
+        self.RefreshPrice()
+        
+        
+        
+        print("Current Cash: $" + str(self.objPortfolio.GetCash()))
         currentHoldings = self.objPortfolio.GetPositions()
         
         dict_symbolaggHld = {}
@@ -42,7 +47,6 @@ class TradeModelView:
             else:
                 dict_symbolaggHld[h.Symbol] = h.Units
        
-        self.RefreshPrice()
         
         print("Current Holdings:")
         #display sorted holdings
@@ -85,7 +89,14 @@ class TradeModelView:
             
     def TradeBuy(self):
         
-       
+    
+        #long buy: unit > 0, amount < 0, cost basis = 0, exec date = now, purchased date = ""
+        #Cover buy: unit > 0, amount > 0, cost basis > 0, exec date = now, purchased date = original short exec date
+        
+        #how to calculate the amount, cost basis, unit, and cash
+        #long buy: cash = cash + (amount), unit > 0, amount = -1 * unit*current_px, amount < 0
+        #Cover buy: cash = cash + (amount), unit > 0, amount = unit * current_px, amount > 0
+        
         
         self.RefreshPrice()
         
@@ -97,6 +108,7 @@ class TradeModelView:
         for sym in StockList:
             print(sym + "  " + str(self.dict_stockBidPx[sym]) + " " +  str(self.dict_stockAskPx[sym]) + " " +  str(self.dict_stockOpenPx[sym]) + " " +  str(self.dict_stockClosePx[sym]) + " " +  str(self.dict_stockStatusPx[sym]))
 
+        print("\n")
         print("Action: Buy")
         input_sym = raw_input("Enter the stock symbol:").strip()
         input_units = raw_input("Enter units:").strip()
@@ -118,23 +130,108 @@ class TradeModelView:
             if self.dict_stockBidPx.has_key(input_sym) and input_units.isdigit():
                 if int_units > 0: #buy units > 0
                 
-                    #Cash control that prevent account in debt, use ask for buy
+                    #buy with cover shorting possible:
+                    #1. sum of all positions with the same symbol
+                    #2. reduce target buy units by short lots in FIFO order
+                    #3. if target buy unit > 0 after all lots are covered,
+                    #       start to buy, but cash is withhold / used (shorting)
+                    
+                    
+                    
+                    #1. sum of all positions with the same symbol
+                    
+                    #get symbol positions (all +/- lots) 
+                    sym_pos = self.objPortfolio.GetPositionsBySym(input_sym)
+                    
+                    #sort the lots by FIFO order (by purchased date)
+                    sym_pos_agg = 0
+                    
+                    if sym_pos:
+                        sym_pos = sorted(sym_pos, key = lambda pos: (pos.PurchasedDate))
+                        for p in sym_pos:
+                            sym_pos_agg = sym_pos_agg + p.Units
+                            
+                        
+                   
                     current_price = 0
                     if priceWarning == True:
                         current_price = self.dict_stockClosePx[input_sym]
                     else:
                         current_price = self.dict_stockAskPx[input_sym]
+                    
+                    
+                    buy_units = int_units #copy user input unit to  sell unit                                
+                  
+                    
+                    #Cash control that prevent account in debt, use ask for buy
+                    #both buy and buy to cover require cash to buy units 
                     if int_units * current_price < self.objPortfolio.GetCash():
-                        order = self.objTrade.OrderEntry("BUY",input_sym,int_units,0,"")
-                        self.objPortfolio.UpdatePosition(order)
+                    
+                        
+                    
+                    #2. reduce target buy units by short lots in FIFO order
+                        
+                        #long buy: unit > 0, amount < 0, cost basis = 0, exec date = now, purchased date = ""
+                        #Cover buy: unit > 0, amount > 0, adj cost basis = (buy units/orig units) * orig cost basis, exec date = now, purchased date = original short exec date
+       
+                        #for some of the +/- lots, if aggregated lots is negative, buy to cover first
+                        if sym_pos_agg < 0:     
+            
+                            for lots in sym_pos:
+                                if lots.Units < 0: #short lots
+                                    if buy_units >= abs(lots.Units):
+                                        #reduce target sell units with whole lot
+                                        buy_units = buy_units - abs(lots.Units)
+                                        
+                                        #send trade order
+                                        committedOrder = self.objTrade.OrderEntry("BUY_TO_CLOSE",input_sym,-1* lots.Units,lots.CostBasis,lots.PurchasedDate)
+                                           
+                                        #update portfolio with order (lot level) to reflect to change the current holdings
+                                        self.objPortfolio.UpdatePosition(committedOrder)
+                                        
+                                    else: #buy is not enough to cover current short lots
+                                        
+                                        #only partial lots are sold when abs(lots.Units) > buy_units
+                                        #calculate partail cost_basis from the short lots
+                                        partial_short_costBasis =  (   (float(buy_units)/abs(float(lots.Units))   ) * float(lots.CostBasis))
+                                        
+                                        #buy unit will be zero after this sell
+                                        #retain the original purchased date (exec Date)
+                                        committedOrder = self.objTrade.OrderEntry("BUY_TO_CLOSE",input_sym,buy_units,partial_short_costBasis,lots.PurchasedDate)
+                                        
+                                        buy_units = 0
+        
+                                        #update portfolio with order (lot level) to reflect to change the current holdings
+                                        self.objPortfolio.UpdatePosition(committedOrder)
+                                        
+                                        break #stop here when the current lot is enough to cover the sells
+                            
+                        #if there is still remain buy units, meaning all short lots are covered, create just a long buy
+                        if buy_units > 0:
+                            committedOrder = self.objTrade.OrderEntry("BUY",input_sym,buy_units,0,"")
+                            buy_units = 0
+                            self.objPortfolio.UpdatePosition(committedOrder)
+                    
                     else:
-                        print("Not Enough Cash to cover your order.  Order is cancelled.")
+                        print("Not Enough Cash to perform your order.  Order is cancelled.")
         else:    
             print("Cancel!")
         
         input_pause = raw_input("Enter to Continue...").strip()
         
     def TradeSell(self):
+        
+        
+        #long sell: unit < 0, amount > 0, cost basis = (sell units/full units) * full cost basis , exec date = now, purchased date = original long exec date
+        #   full units > 0 & full cost basis < 0 & cost basis >0
+        
+        #Short sell: unit < 0, amount < 0, cost basis = 0, exec date = now, purchased date = ""
+        
+        
+        #how to calculate the amount, cost basis, unit, and cash
+        #Long sell:  cash = cash + (amount), unit <0, amount = -1 * unit*current_px, amount > 0
+        
+        #Short sell: cash = cash + (amount), unit <0, amount = unit * current_px, amount < 0
         
         
         
@@ -147,7 +244,8 @@ class TradeModelView:
         print("\nQuote\nStock | Bid | Ask | Open | Close | Quote Status")
         for sym in StockList:
             print(sym + "  " + str(self.dict_stockBidPx[sym]) + " " +  str(self.dict_stockAskPx[sym]) + " " +  str(self.dict_stockOpenPx[sym]) + " " +  str(self.dict_stockClosePx[sym]) + " " +  str(self.dict_stockStatusPx[sym]))
-
+        
+        print("\n")
         print("Action: Sell")
         input_sym = raw_input("Enter the stock symbol:").strip()
         input_units = raw_input("Enter units:").strip()
@@ -169,34 +267,95 @@ class TradeModelView:
             if self.dict_stockBidPx.has_key(input_sym) and input_units.isdigit():
                 if int_units > 0: # units > 0
                 
-                    #Security Sell control that prevent account oversold
-                    sym_pos = self.objPortfolio.GetPositionsBySym(input_sym)
-                    sym_pos = sorted(sym_pos, key = lambda pos: (pos.PurchasedDate))
+                    #sell with short possible:
+                    #1. sum of all positions with the same symbol
+                    #2. reduce target sell unit by lots in FIFO order
+                    #3. if target sell unit > 0 after all lots are sold,
+                    #       start to short, but cash is withhold / used (shorting)
                     
+                    
+                    
+                    
+                    #get symbol positions (all lots) 
                     sym_pos_agg = 0
-                    for p in sym_pos:
-                        sym_pos_agg = sym_pos_agg + p.Units
+                    
+                    sym_pos = self.objPortfolio.GetPositionsBySym(input_sym)
+                    
+                    if sym_pos:
+                    
+                    #sort the lots by FIFO order (by purchased date)
+                        sym_pos = sorted(sym_pos, key = lambda pos: (pos.PurchasedDate))
+                        for p in sym_pos:
+                            sym_pos_agg = sym_pos_agg + p.Units
+                        
+                    #use close price if bid price is zero
+                    current_price = 0
+                    if(self.dict_stockBidPx[input_sym] == 0):
+                        current_price = self.dict_stockClosePx[input_sym]
+                    else:
+                        current_price = self.dict_stockBidPx[input_sym]
                     
                     
-                    if int_units <= sym_pos_agg: #regular sell
+                    #1. sum of all positions with the same symbol
+
                         
-                        agg_sell_amount = int_units
+                    #3. if target sell unit > 0 after all lots are sold,
+                    #       start to short, but cash is withhold / used (shorting)
+                    
+                    
+                    sell_units = int_units #copy user input unit to  sell unit                                
+                    
+                    #overall check: available fund - (sell unit - sum of aggregated holdings) * price > 0
+                    
+                    if self.objPortfolio.GetCash() - ((sell_units - sym_pos_agg) * current_price) > 0:
                         
-                        for pos in sym_pos:
-                            if agg_sell_amount >= pos.Units: #sell the whole lot
-                                    order = self.objTrade.OrderEntry("SELL",input_sym,pos.Units,pos.CostBasis,pos.PurchasedDate)
-                                    self.objPortfolio.UpdatePosition(order)
+                        #2. reduce target sell units by long lots in FIFO order
+                        
+                        #long sell: unit < 0, amount > 0, adj cost basis = (sell units/full units) * full cost basis, exec date = now, purchased date = original long exec date
+                        if sym_pos_agg > 0:
+                            for lots in sym_pos:
+                                if sell_units >= lots.Units:
+                                    #reduce target sell units with whole lot
+                                    sell_units = sell_units - lots.Units
                                     
-                                    agg_sell_amount = agg_sell_amount - pos.Units #reduce the sell amount
+                                    #send trade order
+                                    committedOrder = self.objTrade.OrderEntry("SELL",input_sym,-1* lots.Units,lots.CostBasis,lots.PurchasedDate)
+                                       
+                                    #update portfolio with order (lot level) to reflect to change the current holdings
+                                    self.objPortfolio.UpdatePosition(committedOrder)
                                     
-                            else: #current pos is enough to cover
-                            #sell partial lot, update cost basis for remained position
-                                agg_sell_costBasis =  (float(agg_sell_amount)/float(pos.Units) * float(pos.CostBasis))
-                                order = self.objTrade.OrderEntry("SELL",input_sym,agg_sell_amount,agg_sell_costBasis,pos.PurchasedDate)
-                                self.objPortfolio.UpdatePosition(order)
+                                else:
                                     
-                    else: #shorting
-                        print("Not Enough units to cover your sell order.  Order is cancelled.")
+                                    #only partial lots are sold when lots.Units > sell_units
+                                    #calculate partail cost_basis
+                                    partial_sell_costBasis =  (float(sell_units)/float(lots.Units) * float(lots.CostBasis))
+                                    
+                                    #sell unit will be zero after this sell
+                                    #retain the original purchased date
+                                    committedOrder = self.objTrade.OrderEntry("SELL",input_sym,-1*sell_units,partial_sell_costBasis,lots.PurchasedDate)
+                                    
+                                    sell_units = 0
+    
+                                    #update portfolio with order (lot level) to reflect to change the current holdings
+                                    self.objPortfolio.UpdatePosition(committedOrder)
+                                    
+                                    break #stop here when the current lot is enough to cover the sells
+                            
+                        
+                        
+                        
+                        #3 if sell_unit > 0 after selling all positions, start to short         
+                        if sell_units > 0:
+                             #sell_unit will be zero after trade
+                             #cost_basis is zero for shorting just like long buy
+                             
+                             #send trade order, for the short sell, original purchase date is "" and no cost basis because it is new position
+                             committedOrder = self.objTrade.OrderEntry("SELL_TO_OPEN",input_sym,-1* sell_units,0,"")
+                             self.objPortfolio.UpdatePosition(committedOrder)
+                    
+                    else:                           
+                        print("Not Enough Cash to cover your order.  Order is cancelled.")
+
         else:    
             print("Cancel!")
         

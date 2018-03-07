@@ -108,37 +108,76 @@ class Trade:
         
 
     #Enter trade order, return status, exec price, cost basis, save order history
+    #cost basis according to the units (not the full original units)
+    #PL = difference of Amount and cost basis
     def OrderEntry(self,Action,Symbol,Units,CostBasis,PurchasedDate):
         
         
         #pretent to trade order and save the history
+        
+        
+        #long buy: unit > 0, amount < 0, cost basis = 0, exec date = now, purchased date = ""
+        #long sell: unit < 0, amount > 0, cost basis = (sell units/full units) * full cost basis , exec date = now, purchased date = original long exec date
+        #   full units > 0 & full cost basis < 0 & cost basis >0
+        #Short sell: unit < 0, amount < 0, cost basis = 0, exec date = now, purchased date = ""
+        #Cover buy: unit > 0, amount > 0, cost basis = (buy units/full units) * full cost basis, exec date = now, purchased date = original short exec date
+        #   full units < 0 & full cost basis < 0 & cost basis > 0
+        
+        #full cost basis is previous amount
+        
         quote = self.GetQuote(Symbol)
         order = Order()
         order.Symbol = Symbol
         order.Action = Action
+        order.Units = Units
+        order.PurchasedDate = PurchasedDate        
         
         if Action == "BUY":
-            order.Units = Units
+            
             if quote.Ask == 0:
                 order.ExecPx = quote.Close
             else:
                 order.ExecPx = quote.Ask
+            
+            order.Amount = -1* order.ExecPx *  order.Units
         
         if Action == "SELL":
-            order.Units = -1*Units
-            order.PurchasedDate = PurchasedDate
+
             if quote.Bid == 0:
                 order.ExecPx = quote.Close
             else:
                 order.ExecPx = quote.Bid
+            
+            order.Amount = -1* order.ExecPx *  order.Units
         
         
+        if Action == "SELL_TO_OPEN":
+
+            if quote.Bid == 0:
+                order.ExecPx = quote.Close
+            else:
+                order.ExecPx = quote.Bid
+            
+            order.Amount = order.ExecPx *  order.Units
         
-        order.Amount = order.ExecPx * Units
+        
+        if Action == "BUY_TO_CLOSE":
+            if quote.Ask == 0:
+                order.ExecPx = quote.Close
+            else:
+                order.ExecPx = quote.Ask
+            
+            order.Amount = order.ExecPx *  order.Units
+        
+        
+        #buy/short sell have cost basis = 0, sell/cover buy have cost basis
+        #value from variable
+        order.CostBasis = float(CostBasis) 
+        
+        
         
         order.ExecDate = str(datetime.datetime.now())
         
-        order.CostBasis = abs(float(CostBasis)) #buy cost basis = 0, sell has cost basis
         
         order.Status = "Y"
         
@@ -181,7 +220,7 @@ class Trade:
             summary_value = soup.find(id="quote-summary").get_text()    
     
         else: #code stop here if id="quote-summary" is not found
-            error_q = Quote(symbol,'N',BidPx, AskPx)
+            error_q = Quote(symbol,'N',BidPx, AskPx, OpenPx, ClosePx)
             return error_q 
     
         #bid price regular expression

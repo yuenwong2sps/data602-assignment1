@@ -44,10 +44,9 @@ def menuTrade():
         objTradeMV.DisplayCurrentHoldings()
         
         print('\n\n**Trade Action**')
-        print('1. Buy')
-        print('2. Sell (FIFO)')
-        print('3. Sell to Open (Short)')
-        print('4. Buy to Close (Short)')
+        print('1. Buy / Buy To Close (FIFO)')
+        print('2. Sell (FIFO) / Sell To Open')
+
         print('9. Quit')
         subMenuOption = raw_input('Option :').strip()
         

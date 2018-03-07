@@ -75,19 +75,20 @@ class Portfolio:
         for row in csvReader:
             if len(row) > 3:
                 if(row[0]!='Symbol'): #skip the header line
-                    #create object to store position
-                    p = Position()
-                
-                    p.Symbol = row[0]
-                    p.Units = float(row[1])
-                    p.PurchasedPx = float(row[2])
-                    p.PurchasedDate = row[3]
-                    p.CostBasis = row[4]
+                    #create object to store position with non-zero units
+                    if float(row[1]) != 0:
+                        p = Position()
                     
-                    if p.Symbol == "CASH-1":  #for cash, keep in cash variable
-                        self.Cash = p.Units
-                    else:
-                        self.Positions.append(p) #for security, add to holdings list
+                        p.Symbol = row[0]
+                        p.Units = float(row[1])
+                        p.PurchasedPx = float(row[2])
+                        p.PurchasedDate = row[3]
+                        p.CostBasis = float(row[4])
+                        
+                        if p.Symbol == "CASH-1":  #for cash, keep in cash variable
+                            self.Cash = p.Units
+                        else:
+                            self.Positions.append(p) #for security, add to holdings list
                         
                 
                 
@@ -107,35 +108,48 @@ class Portfolio:
 
 
         
-    #if it is buy, add position with symbol and date
-    #if it is sell, sell with symbol with purchased date (taxlot)
     #read all orders, update holdings, write back to file
-    #update current cash -= trade amount 
     #Assume given "order" is executed with sufficient cash
     def UpdatePosition(self, order):
+        
+        #order = new trade
+        #holdings = existing positions
+        
+        #full cost basis is the original cost basis
+        #cost basis is the cost basis for new order
         self.ReadHoldings()
         
-        IsChanged = False 
+        #general:
+        #long buy: unit > 0, amount < 0, cost basis = 0, exec date = now, purchased date = ""
+        #long sell: unit < 0, amount > 0, adj cost basis = (sell units/orig units) * orig. cost basis , exec date = now, purchased date = original long exec date
+        #   orig units > 0 & orig cost basis < 0 & cost basis >0
         
-        #Long action
-        if order.Action == "SELL":
-            #for sell, order.Unit is neative, use abs() to fix the unit
-            for p in self.Positions:
-                if p.PurchasedDate == order.PurchasedDate and p.Symbol == order.Symbol:
-                    if p.Units == abs(order.Units): #sell the whole lot
-                        p.Units = 0
-                        p.CostBasis = 0
-                    else:
-                        adj_costBasis = 1 - (float(abs(order.Units))/float(p.Units))*float(p.CostBasis) #update cost basis due to partail sell
-                        p.Units = p.Units - abs(order.Units)
-                        p.CostBasis = adj_costBasis
-                    #after sell, add cash
-                    self.Cash = self.Cash + order.Amount
-                    
-                    IsChanged = True #flip the sign to the change
-                    
-          
-            
+        #Short sell: unit < 0, amount < 0, cost basis = 0, exec date = now, purchased date = ""
+        #Cover buy: unit > 0, amount > 0, adj cost basis = (buy units/orig units) * orig cost basis, exec date = now, purchased date = original short exec date
+        #   orig units < 0 & orig cost basis < 0 & cost basis > 0
+        
+        
+        
+        
+        #how to calculate the amount, cost basis, unit, and cash
+        #long buy: cash = cash + (amount), unit > 0, amount = -1 * unit*current_px, amount < 0
+        #Long sell:  cash = cash + (amount), unit <0, amount = -1 * unit*current_px, amount > 0
+        
+        #Short sell: cash = cash + (amount), unit <0, amount = unit * current_px, amount < 0
+        #Cover buy: cash = cash + (amount), unit > 0, amount = unit * current_px, amount > 0
+        
+        
+        
+        
+        #cost basis is used for P/L 
+        #if amount from sell > cost basis from buy, it is profit, else it is loss
+        #if amount from cover buy < cost basis from short sell, it is profit, else it is loss
+        
+        
+        
+        IsChanged = False 
+
+
         #Long action
         if order.Action == "BUY":
             
@@ -148,20 +162,78 @@ class Portfolio:
             p.PurchasedDate = order.ExecDate
             p.CostBasis = order.Amount
             
-            self.Cash = self.Cash - order.Amount
+            self.Cash = self.Cash + order.Amount
             self.Positions.append(p)
             IsChanged = True #flip the sign to the change
 
+
         
+        #Long action
+        if order.Action == "SELL":
+            #for long sell, lot is positive and order.Unit is neative 
+            for p in self.Positions:
+                if p.PurchasedDate == order.PurchasedDate and p.Symbol == order.Symbol:
+                    if p.Units == abs(order.Units): #sell the whole lot
+                        p.Units = 0
+                        p.CostBasis = 0
+                    else:
+                        #remain cost basis = (1 - (sold pct)) * original cost basis
+                        adj_costBasis = (float(order.Units)/float(p.Units))*float(p.CostBasis) #update cost basis due to partail sell
+                        p.Units = p.Units + order.Units #p.Unit is +ve and order.Units is -ve
+                        p.CostBasis = p.CostBasis - adj_costBasis
+                    #after sell, add cash
+                    self.Cash = self.Cash + order.Amount
+                    
+                    IsChanged = True #flip the sign to the change
+                    break #stop the loop for updating lots
 
-
-        #Short action    
+                        
+        #Short action   
         if order.Action == "SELL_TO_OPEN":
-            print("Sell to open")
+            #for sell, order.Unit is neative
             
+            if order.PurchasedDate == "": #it is short sell(original purchased date is zero)
+                #short sell just like create a buy position
+                
+                #negative share with cash deduction
+                
+                #append new traded ordered to current holdings
+                p = Position()
+                p.Symbol = order.Symbol
+                p.Units = float(order.Units)
+                p.PurchasedPx = order.ExecPx
+                p.PurchasedDate = order.ExecDate
+                p.CostBasis = order.Amount #new order amount => lot cost basis
+                
+                self.Cash = self.Cash + order.Amount
+                self.Positions.append(p)
+                IsChanged = True #flip the sign to the change
+                
+          
+          
+
+
         #Short action
         if order.Action == "BUY_TO_CLOSE":    
-            print("buy to close")
+            #for short sell, lot is negative and order.Unit is positive 
+            for p in self.Positions:
+                if p.PurchasedDate == order.PurchasedDate and p.Symbol == order.Symbol:
+                    if abs(p.Units) == order.Units: #sell the whole lot
+                        p.Units = 0
+                        p.CostBasis = 0
+                        
+                        
+                    else:
+                        #remain cost basis = (1 - (sold pct)) * original cost basis
+                        adj_costBasis = (float(order.Units)/float(p.Units))*float(p.CostBasis) #update cost basis due to partail cover buy
+                        p.Units = p.Units + order.Units #p.Units is -ve and order.Units is +ve
+                        p.CostBasis = p.CostBasis - adj_costBasis
+                    #after sell, add cash
+                    self.Cash = self.Cash + order.Amount
+                    
+                    IsChanged = True #flip the sign to the change
+                    break #stop the loop for updating lots
+ 
             
             
         #if there is any change, update    
@@ -191,8 +263,8 @@ class Portfolio:
                 sym_pos.append(p)
         
         if not sym_pos: #is empty list
-            dummyP = Position()
-            return dummyP
+            
+            return []
         else:
             return sym_pos
     
