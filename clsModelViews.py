@@ -12,6 +12,9 @@ import csv
 
 import collections
 
+import pandas as pd
+import numpy as np
+
 
         
         
@@ -384,4 +387,111 @@ class BlotterModelView:
                    
         for i_entry in entries:
             print(i_entry.Side + "," + i_entry.Ticker + "," + i_entry.Quantity + "," + i_entry.ExecPx + "," + i_entry.MoneyInOut + "," + i_entry.ExecDate)
+
+class PLModelView:
+    def PLView(self):
+        self.objTrade = clsTrade.Trade()
+        orderHistory = pd.read_csv("OrderHistory.csv")
+        portfolio = pd.read_csv("Portfolio.csv")
+        symbolList = pd.read_csv("SymbolList.csv")
+        
+        #get symbol with units for current positions
+        sym_pos = pd.pivot_table(portfolio,values='Units', index=['Symbol'], aggfunc=np.sum)
+        sym_pos.reset_index(inplace=True) #reset before merging
+        
+        #get unrealized costbasis for current position
+        sym_costbasis = pd.pivot_table(portfolio,values='CostBasis', index=['Symbol'], aggfunc=np.sum)
+        sym_costbasis.reset_index(inplace=True) #reset before merging
+        
+        #get Realized P/L per symbol
+        sym_RUL = orderHistory.query('Action == "BUY_TO_CLOSE" or Action == "SELL"')
+        sym_RUL = pd.pivot_table(sym_RUL, values=['CostBasis','Amount'], index=['Symbol'], aggfunc=np.sum )
+        sym_RUL.reset_index(inplace=True) #reset before merging
+        
+        
+        #merge symbol (with dummy columns) with traded cost basis and amount for Realized P/L
+        total_sym = pd.merge(symbolList, sym_RUL, 'outer', on = ['Symbol'])
+        total_sym.fillna(0, inplace=True)
+        
+        #update RUL with costbasis / units
+        for i, row in total_sym.iterrows():
+            if row['Amount'] == 0 and row['CostBasis'] == 0:
+                tmp_RUL = 0.0
+            else: 
+                tmp_RUL = float(row['CostBasis']) + float(row['Amount'])
+            total_sym.set_value(i,'RUL',tmp_RUL)
+        
+        #drop cost basis and amount columns after RUL calculation
+        total_sym = total_sym.drop(['Amount', 'CostBasis'], axis=1)
+        
+        
+        #merge position 
+        total_sym = pd.merge(total_sym, sym_pos, 'outer', on = ['Symbol'])
+        
+        #merge cost basis for Unrealised PL 
+        total_sym = pd.merge(total_sym, sym_costbasis, 'outer', on = ['Symbol'])
+        
+        
+        #update WAP with costbasis / units
+        for i, row in total_sym.iterrows():
+            if row['Units'] == 0:
+                tmp_wap = 0.0
+            else: 
+                tmp_wap = float(row['CostBasis'])/ float(row['Units'])
+            total_sym.set_value(i,'WAP',tmp_wap)
+        
+        total_sym.fillna(0, inplace=True)
+        
+        
+        total_sym.rename(index=str, columns={"Units": "Positions", "CostBasis": "UPL"})
+        
+        total_sym.columns =  ['Ticker','WAP','RUL','MarketPx','Positions','UPL']
+        
+        total_sym = total_sym[['Ticker','Positions','MarketPx','WAP','UPL','RUL']]
+        
+        
+        #update Market Px with quotes
+        priceWarning = False
+        
+        for i, row in total_sym.iterrows():
+            tmp_quotes = self.objTrade.GetQuote(row['Ticker']) #get stock quote
+            current_px = 0
             
+            if(tmp_quotes.Bid == 0 or tmp_quotes.Ask == 0):
+                priceWarning = True
+                current_px =   float(tmp_quotes.stock_quote.Close)
+            else:
+                current_px =   (float(tmp_quotes.Bid) +  float(tmp_quotes.Bid))/2
+            
+            total_sym.set_value(i,'MarketPx',current_px)
+        
+        #update Unrealized PL =  (current share * price ) + costBasis
+        
+        #Unrealized P/L
+        #for long, (unit * current price) + cost basis
+        #for short, (-1 * unit  * current price) + cost basis
+        
+        for i, row in total_sym.iterrows():
+            tmp_UPL = 0
+            if row["Positions"] > 0: #long
+                tmp_UPL = (row["Positions"] * row["MarketPx"] )+ row["UPL"]
+            if row["Positions"] < 0: #Short
+                tmp_UPL = row["UPL"] + (-1 * row["Positions"] * row["MarketPx"]) 
+            
+            total_sym.set_value(i,'UPL',tmp_UPL)
+            
+        #fix cash line
+        for i, row in total_sym.iterrows():
+            if row["Ticker"] == 'CASH-1': 
+                total_sym.set_value(i,'MarketPx',row["Positions"])
+                total_sym.set_value(i,'UPL',0)
+                
+                
+                
+        if priceWarning == True:
+            print("Warning: Some prices have zero $ for bid or ask price, switch to Close price.\n\n")
+            
+        
+        total_sym.fillna(0, inplace=True)
+        
+        print(total_sym)

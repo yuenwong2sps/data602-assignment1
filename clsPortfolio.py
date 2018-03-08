@@ -145,6 +145,9 @@ class Portfolio:
         #if amount from sell > cost basis from buy, it is profit, else it is loss
         #if amount from cover buy < cost basis from short sell, it is profit, else it is loss
         
+        #Unrealized P/L
+        #for long, (unit * current price) + cost basis
+        #for short, (-1 * unit  * current price) + cost basis
         
         
         IsChanged = False 
@@ -180,7 +183,7 @@ class Portfolio:
                         #remain cost basis = (1 - (sold pct)) * original cost basis
                         adj_costBasis = (float(order.Units)/float(p.Units))*float(p.CostBasis) #update cost basis due to partail sell
                         p.Units = p.Units + order.Units #p.Unit is +ve and order.Units is -ve
-                        p.CostBasis = p.CostBasis - adj_costBasis
+                        p.CostBasis = p.CostBasis + adj_costBasis
                     #after sell, add cash
                     self.Cash = self.Cash + order.Amount
                     
@@ -227,7 +230,7 @@ class Portfolio:
                         #remain cost basis = (1 - (sold pct)) * original cost basis
                         adj_costBasis = (float(order.Units)/float(p.Units))*float(p.CostBasis) #update cost basis due to partail cover buy
                         p.Units = p.Units + order.Units #p.Units is -ve and order.Units is +ve
-                        p.CostBasis = p.CostBasis - adj_costBasis
+                        p.CostBasis = p.CostBasis + abs(adj_costBasis)
                     #after sell, add cash
                     self.Cash = self.Cash + order.Amount
                     

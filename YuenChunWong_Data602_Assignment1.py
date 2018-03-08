@@ -70,9 +70,12 @@ def menuShowBlotter():
 
 def menuShowPL():
     subMenuOption = 0
+    objPLMV = clsModelViews.PLModelView()
     while subMenuOption != '9':
         print('\n'*100)
         print('**P/L**')
+        objPLMV.PLView()
+        print("\n\n")
         print('9. Quit')
         subMenuOption = raw_input('Option :').strip()
         
